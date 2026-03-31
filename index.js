@@ -45,6 +45,10 @@ const students = new Map();
 const monitors = new Map();
 // Map<socketId, { peerId }>
 
+function buildStudentList() {
+  return Array.from(students, ([id, data]) => ({ id, ...data }));
+}
+
 // ─── Monitor namespace ──────────────────────────────────────────────────
 
 const monitorNs = io.of("/monitor");
@@ -53,17 +57,14 @@ monitorNs.on("connection", (socket) => {
   console.log("[Monitor] connected:", socket.id);
 
   // Send current student list
-  const list = [];
-  for (const [id, data] of students) {
-    list.push({ id, ...data });
-  }
-  socket.emit("student-list", list);
+  socket.emit("student-list", buildStudentList());
 
   // Monitor registers its PeerJS peerId
   socket.on("monitor-peer-id", ({ peerId }) => {
     const pid = String(peerId || "").slice(0, 60);
     monitors.set(socket.id, { peerId: pid });
     console.log(`[Monitor] registered peerId: ${pid}`);
+    socket.emit("student-list", buildStudentList());
     // Tell all students about this monitor so they can call it
     studentNs.emit("monitor-peer-id", { peerId: pid });
   });

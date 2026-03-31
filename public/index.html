@@ -148,9 +148,16 @@
     const appPort = location.port
       ? Number(location.port)
       : (isSecure ? 443 : 80);
+    const baseUrl = window.location.origin;
 
-    const socket = io("/monitor", {
-      transports: ["websocket", "polling"],
+    const socket = io(`${baseUrl}/monitor`, {
+      path: "/socket.io",
+      transports: ["polling"],
+      upgrade: false,
+      reconnection: true,
+      reconnectionAttempts: 10,
+      timeout: 10000,
+      autoConnect: false,
     });
     const students = new Map();
     const activeCalls = new Map();   // socketId → MediaConnection
@@ -158,6 +165,26 @@
     const empty = document.getElementById("empty");
     const studentCountEl = document.getElementById("studentCount");
     const totalViolationsEl = document.getElementById("totalViolations");
+    let monitorPeerId = "";
+
+    function registerMonitorPeer() {
+      if (!monitorPeerId || !socket.connected) return;
+      console.log("[Monitor] Registering peerId:", monitorPeerId);
+      socket.emit("monitor-peer-id", { peerId: monitorPeerId });
+    }
+
+    socket.on("connect", () => {
+      console.log("[Monitor] Socket connected:", socket.id);
+      registerMonitorPeer();
+    });
+
+    socket.on("disconnect", (reason) => {
+      console.warn("[Monitor] Socket disconnected:", reason);
+    });
+
+    socket.on("connect_error", (err) => {
+      console.warn("[Monitor] Socket error:", err.message);
+    });
 
     // ─── PeerJS client for monitor ──────────────────────────────────
     // Coolify exposes one public URL, so keep PeerJS on the same origin.
@@ -171,8 +198,8 @@
 
     peer.on("open", (id) => {
       console.log("[Monitor] Peer ready:", id);
-      // Tell server our peerId so it can relay to students
-      socket.emit("monitor-peer-id", { peerId: id });
+      monitorPeerId = id;
+      registerMonitorPeer();
     });
     peer.on("error", (err) => console.warn("[Monitor] Peer error:", err));
 
@@ -234,6 +261,9 @@
     }
 
     function createCard(id, data) {
+      const existing = document.getElementById("card-" + id);
+      if (existing) return existing;
+
       const card = document.createElement("div");
       card.className = "student-card";
       card.id = "card-" + id;
@@ -266,17 +296,22 @@
 
     function escapeHtml(str) {
       const div = document.createElement("div");
-      div.textContent = str;
+      div.textContent = String(str ?? "");
       return div.innerHTML;
     }
 
     // ─── Socket events ──────────────────────────────────────────────
 
-    socket.on("student-list", (list) => {
+    socket.on("student-list", (list = []) => {
+      console.log("[Monitor] student-list received:", list.length);
+      students.clear();
+      grid.innerHTML = "";
+
       for (const s of list) {
         students.set(s.id, s);
         createCard(s.id, s);
       }
+
       updateCounts();
     });
 
@@ -314,6 +349,8 @@
       }
       updateCounts();
     });
+
+    socket.connect();
   </script>
 </body>
 </html>
