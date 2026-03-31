@@ -1,0 +1,14 @@
+{
+  "name": "mockmee-monitor-server",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "peer": "^1.0.2",
+    "peerjs": "^1.5.5",
+    "socket.io": "^4.8.0"
+  }
+}

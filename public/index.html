@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mockmee — Live Monitor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+    header {
+      background: #1e293b;
+      padding: 16px 24px;
+      border-bottom: 1px solid #334155;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 {
+      font-size: 20px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    header h1 span { color: #ef4444; }
+    .status-bar {
+      display: flex;
+      gap: 20px;
+      font-size: 13px;
+      color: #94a3b8;
+    }
+    .status-bar .count { color: #22d3ee; font-weight: 600; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+      padding: 20px;
+    }
+    .student-card {
+      background: #1e293b;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #334155;
+      transition: border-color 0.2s;
+    }
+    .student-card.violation { border-color: #ef4444; }
+    .student-card .video-container {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4/3;
+      background: #0f172a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .student-card video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .student-card .no-video {
+      color: #475569;
+      font-size: 14px;
+    }
+    .student-card .info {
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .student-card .name {
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .student-card .meta {
+      font-size: 12px;
+      color: #64748b;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-skill {
+      background: #1e3a5f;
+      color: #38bdf8;
+    }
+    .badge-violation {
+      background: #450a0a;
+      color: #fca5a5;
+    }
+    .badge-online {
+      background: #052e16;
+      color: #4ade80;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 80px 20px;
+      color: #475569;
+    }
+    .empty-state h2 { font-size: 18px; margin-bottom: 8px; color: #64748b; }
+    .empty-state p { font-size: 14px; }
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #22c55e;
+      display: inline-block;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>
+      <span>&#9679;</span> Mockmee Monitor
+      <div class="live-dot"></div>
+    </h1>
+    <div class="status-bar">
+      <div>Students online: <span class="count" id="studentCount">0</span></div>
+      <div>Total violations: <span class="count" id="totalViolations">0</span></div>
+    </div>
+  </header>
+
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty-state">
+    <h2>No students connected</h2>
+    <p>Students will appear here once they start a test.</p>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script>
+    const socket = io("/monitor");
+    const students = new Map();
+    const activeCalls = new Map();   // socketId → MediaConnection
+    const grid = document.getElementById("grid");
+    const empty = document.getElementById("empty");
+    const studentCountEl = document.getElementById("studentCount");
+    const totalViolationsEl = document.getElementById("totalViolations");
+
+    // ─── PeerJS client for monitor ──────────────────────────────────
+    const peer = new Peer({
+      host: location.hostname,
+      port: (Number(location.port) || 4000) + 1, // PeerJS runs on PORT+1
+      path: "/peerjs",
+      secure: location.protocol === "https:",
+      debug: 0,
+    });
+
+    peer.on("open", (id) => {
+      console.log("[Monitor] Peer ready:", id);
+      // Tell server our peerId so it can relay to students
+      socket.emit("monitor-peer-id", { peerId: id });
+    });
+    peer.on("error", (err) => console.warn("[Monitor] Peer error:", err));
+
+    // ─── Receive incoming calls from students ───────────────────────
+    // Students call us with their camera stream (one-way: we don't send video back)
+    peer.on("call", (incomingCall) => {
+      console.log("[Monitor] Incoming call from peer:", incomingCall.peer);
+      // Answer without a stream — one-way call (monitor receives only)
+      incomingCall.answer();
+
+      incomingCall.on("stream", (remoteStream) => {
+        console.log("[Monitor] Got stream, tracks:", remoteStream.getTracks().length);
+        // Find which student card this peer belongs to
+        const socketId = findSocketIdByPeerId(incomingCall.peer);
+        if (!socketId) {
+          console.warn("[Monitor] No student found for peer:", incomingCall.peer);
+          return;
+        }
+        activeCalls.set(socketId, incomingCall);
+        const videoEl = document.getElementById("video-" + socketId);
+        const noVideo = document.getElementById("novideo-" + socketId);
+        if (videoEl) {
+          videoEl.srcObject = remoteStream;
+          videoEl.style.display = "block";
+          if (noVideo) noVideo.style.display = "none";
+        }
+      });
+
+      incomingCall.on("close", () => {
+        const socketId = findSocketIdByPeerId(incomingCall.peer);
+        if (socketId) {
+          activeCalls.delete(socketId);
+          const noVideo = document.getElementById("novideo-" + socketId);
+          const videoEl = document.getElementById("video-" + socketId);
+          if (videoEl) videoEl.style.display = "none";
+          if (noVideo) { noVideo.textContent = "Disconnected"; noVideo.style.display = ""; }
+        }
+      });
+
+      incomingCall.on("error", (err) => {
+        console.warn("[Monitor] Call error:", err);
+      });
+    });
+
+    // Helper: find socket ID by PeerJS peer ID
+    function findSocketIdByPeerId(peerId) {
+      for (const [socketId, data] of students) {
+        if (data.peerId === peerId) return socketId;
+      }
+      return null;
+    }
+
+    function updateCounts() {
+      studentCountEl.textContent = students.size;
+      let total = 0;
+      for (const s of students.values()) total += s.violations || 0;
+      totalViolationsEl.textContent = total;
+      empty.style.display = students.size === 0 ? "block" : "none";
+    }
+
+    function createCard(id, data) {
+      const card = document.createElement("div");
+      card.className = "student-card";
+      card.id = "card-" + id;
+      card.innerHTML = `
+        <div class="video-container">
+          <video id="video-${id}" autoplay playsinline muted style="display:none"></video>
+          <span class="no-video" id="novideo-${id}">Connecting camera...</span>
+        </div>
+        <div class="info">
+          <div>
+            <div class="name">${escapeHtml(data.fullName)}</div>
+            <div class="meta">@${escapeHtml(data.username)}</div>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <span class="badge badge-skill">${escapeHtml(data.skill || "—")}</span>
+            <span class="badge badge-violation" id="vbadge-${id}" style="display:none">⚠ 0</span>
+            <span class="badge badge-online">● LIVE</span>
+          </div>
+        </div>
+      `;
+      grid.appendChild(card);
+    }
+
+    function removeCard(id) {
+      const call = activeCalls.get(id);
+      if (call) { call.close(); activeCalls.delete(id); }
+      const card = document.getElementById("card-" + id);
+      if (card) card.remove();
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement("div");
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // ─── Socket events ──────────────────────────────────────────────
+
+    socket.on("student-list", (list) => {
+      for (const s of list) {
+        students.set(s.id, s);
+        createCard(s.id, s);
+      }
+      updateCounts();
+    });
+
+    socket.on("student-joined", (data) => {
+      students.set(data.id, data);
+      createCard(data.id, data);
+      updateCounts();
+    });
+
+    socket.on("student-peer-update", ({ id, peerId }) => {
+      const student = students.get(id);
+      if (student) student.peerId = peerId;
+    });
+
+    socket.on("student-left", ({ id }) => {
+      students.delete(id);
+      removeCard(id);
+      updateCounts();
+    });
+
+    socket.on("student-violation", ({ id, type, count }) => {
+      const student = students.get(id);
+      if (student) student.violations = count;
+
+      const card = document.getElementById("card-" + id);
+      if (card) {
+        card.classList.add("violation");
+        setTimeout(() => card.classList.remove("violation"), 3000);
+      }
+
+      const badge = document.getElementById("vbadge-" + id);
+      if (badge) {
+        badge.style.display = "inline-flex";
+        badge.textContent = "⚠ " + count;
+      }
+      updateCounts();
+    });
+  </script>
+</body>
+</html>
