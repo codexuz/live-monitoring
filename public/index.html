@@ -144,7 +144,14 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script>
-    const socket = io("/monitor");
+    const isSecure = location.protocol === "https:";
+    const appPort = location.port
+      ? Number(location.port)
+      : (isSecure ? 443 : 80);
+
+    const socket = io("/monitor", {
+      transports: ["websocket", "polling"],
+    });
     const students = new Map();
     const activeCalls = new Map();   // socketId → MediaConnection
     const grid = document.getElementById("grid");
@@ -153,11 +160,12 @@
     const totalViolationsEl = document.getElementById("totalViolations");
 
     // ─── PeerJS client for monitor ──────────────────────────────────
-    const peer = new Peer({
+    // Coolify exposes one public URL, so keep PeerJS on the same origin.
+    const peer = new Peer(undefined, {
       host: location.hostname,
-      port: (Number(location.port) || 4000) + 1, // PeerJS runs on PORT+1
+      port: appPort,
       path: "/peerjs",
-      secure: location.protocol === "https:",
+      secure: isSecure,
       debug: 0,
     });
 

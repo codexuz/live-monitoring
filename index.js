@@ -1,26 +1,29 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const { PeerServer } = require("peer");
+const { ExpressPeerServer } = require("peer");
 const os = require("os");
 const path = require("path");
 
 const PORT = process.env.PORT || 4000;
-const PEER_PORT = Number(PORT) + 1; // PeerJS on port 4001
 
 const app = express();
+app.set("trust proxy", 1);
+
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: "*" },
+  cors: { origin: true, credentials: true },
 });
 
-// ─── PeerJS server on separate port (avoids WebSocket conflict with Socket.IO)
+// ─── PeerJS server on the same origin/port (Coolify-friendly) ─────────
 
-const peerServer = PeerServer({
-  port: PEER_PORT,
-  path: "/peerjs",
+const peerServer = ExpressPeerServer(server, {
+  path: "/",
   allow_discovery: false,
+  proxied: true,
 });
+
+app.use("/peerjs", peerServer);
 
 peerServer.on("error", (err) => {
   console.error(`[PeerJS] Server error:`, err.message);
@@ -150,13 +153,12 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log("\n╔══════════════════════════════════════════════════╗");
   console.log("║     Mockmee Monitoring Server                    ║");
   console.log("╠══════════════════════════════════════════════════╣");
-  console.log(`║  Dashboard: http://localhost:${PORT}              ║`);
-  console.log(`║  PeerJS:    port ${PEER_PORT}                          ║`);
+  console.log(`║  Dashboard: http://localhost:${PORT}`);
+  console.log(`║  PeerJS:    http://localhost:${PORT}/peerjs`);
   for (const ip of lanIPs) {
-    const url = `http://${ip}:${PORT}`;
-    console.log(`║  LAN:       ${url.padEnd(35)}║`);
+    console.log(`║  LAN:       http://${ip}:${PORT}`);
   }
   console.log("╠══════════════════════════════════════════════════╣");
-  console.log("║  Open the LAN URL on any device to monitor      ║");
+  console.log("║  Open the app URL in Coolify or on your LAN     ║");
   console.log("╚══════════════════════════════════════════════════╝\n");
 });
