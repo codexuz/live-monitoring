@@ -185,6 +185,20 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+app.get("/api/db/download", (req, res) => {
+  if (!fs.existsSync(DB_PATH)) {
+    res.status(404).json({ success: false, message: "Database file not found" });
+    return;
+  }
+
+  res.download(DB_PATH, "monitor.db", (error) => {
+    if (error && !res.headersSent) {
+      console.error("[DB] download failed:", error.message);
+      res.status(500).json({ success: false, message: "Failed to download database" });
+    }
+  });
+});
+
 // ─── PeerJS server on the same origin/port (Coolify-friendly) ─────────
 
 const peerServer = ExpressPeerServer(server, {

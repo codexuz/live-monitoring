@@ -260,9 +260,27 @@
       empty.style.display = students.size === 0 ? "block" : "none";
     }
 
+    function syncViolationBadge(id, count) {
+      const violationCount = Number(count) || 0;
+      const card = document.getElementById("card-" + id);
+      const badge = document.getElementById("vbadge-" + id);
+
+      if (card) {
+        card.classList.toggle("violation", violationCount > 0);
+      }
+
+      if (!badge) return;
+
+      badge.style.display = violationCount > 0 ? "inline-flex" : "none";
+      badge.textContent = "⚠ " + violationCount;
+    }
+
     function createCard(id, data) {
       const existing = document.getElementById("card-" + id);
-      if (existing) return existing;
+      if (existing) {
+        syncViolationBadge(id, data.violations);
+        return existing;
+      }
 
       const card = document.createElement("div");
       card.className = "student-card";
@@ -285,6 +303,7 @@
         </div>
       `;
       grid.appendChild(card);
+      syncViolationBadge(id, data.violations);
     }
 
     function removeCard(id) {
@@ -342,11 +361,7 @@
         setTimeout(() => card.classList.remove("violation"), 3000);
       }
 
-      const badge = document.getElementById("vbadge-" + id);
-      if (badge) {
-        badge.style.display = "inline-flex";
-        badge.textContent = "⚠ " + count;
-      }
+      syncViolationBadge(id, count);
       updateCounts();
     });
 
